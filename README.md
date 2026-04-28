@@ -19,8 +19,8 @@
 
 | 文件 | 用途 |
 |------|------|
-| [translate.py](file:///Users/yzq/Desktop/workspace/开发/LocalTranslator/translate.py) | 翻译逻辑主脚本（语言检测 → Ollama 调用 → UI 启动） |
-| [TranslatorUI.swift](file:///Users/yzq/Desktop/workspace/开发/LocalTranslator/TranslatorUI.swift) | Swift 原生半透明面板源码 |
+| [translate.py](./translate.py) | 翻译逻辑主脚本（语言检测 → Ollama 调用 → UI 启动） |
+| [TranslatorUI.swift](./TranslatorUI.swift) | Swift 原生半透明面板源码 |
 | `TranslatorUI` | 编译好的 Swift 二进制 (已就绪) |
 
 ---
@@ -31,7 +31,6 @@
 先把脚本和 UI 二进制安装到 `~/Library/Application Support/LocalTranslator`。不要让 Automator 直接调用 Desktop 下的脚本，否则 macOS 可能拦截并报 `Operation not permitted`。
 
 ```bash
-cd "$HOME/Desktop/workspace/开发/LocalTranslator"
 ./scripts/install_runtime.sh
 ```
 
