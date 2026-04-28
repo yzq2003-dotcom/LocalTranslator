@@ -7,7 +7,7 @@
 import Cocoa
 
 // MARK: - 数据模型
-struct TranslationData {
+struct TranslationData: Codable {
     let original: String
     let translated: String
     let sourceLang: String
@@ -18,36 +18,70 @@ struct TranslationData {
 // MARK: - 翻译面板窗口
 class TranslationPanel: NSWindow {
 
-    private var originalLabel: NSTextField!
-    private var translatedLabel: NSTextField!
+    private struct PanelLayout {
+        let windowWidth: CGFloat
+        let windowHeight: CGFloat
+        let contentWidth: CGFloat
+        let originalViewportHeight: CGFloat
+        let translatedViewportHeight: CGFloat
+        let originalDocumentHeight: CGFloat
+        let translatedDocumentHeight: CGFloat
+    }
+
+    private var originalTextView: NSTextView!
+    private var translatedTextView: NSTextView!
     private var headerLabel: NSTextField!
     private var copyButton: NSButton!
     private var closeButton: NSButton!
     private var divider: NSBox!
-    private var data: TranslationData
+    private let data: TranslationData
+    private let layout: PanelLayout
 
     init(data: TranslationData) {
         self.data = data
 
-        // 动态计算窗口高度
-        let windowWidth: CGFloat = 420
+        let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let windowWidth = min(max(screenFrame.width * 0.38, 460), 560)
         let padding: CGFloat = 20
         let contentWidth = windowWidth - padding * 2
 
-        // 测量文本高度
-        let originalHeight = TranslationPanel.measureTextHeight(data.original, width: contentWidth, fontSize: 13)
-        let translatedHeight = TranslationPanel.measureTextHeight(data.translated, width: contentWidth, fontSize: 14)
+        let originalFont = NSFont.systemFont(ofSize: 13)
+        let translatedFont = NSFont.systemFont(ofSize: 14, weight: .medium)
+        let originalDocumentHeight = TranslationPanel.measureTextHeight(data.original, width: contentWidth, font: originalFont)
+        let translatedDocumentHeight = TranslationPanel.measureTextHeight(data.translated, width: contentWidth, font: translatedFont)
 
-        // header(30) + originalText + spacing(12) + divider(1) + spacing(12) + translatedText + spacing(16) + buttons(32) + padding
-        let totalHeight = 30 + originalHeight + 12 + 1 + 12 + translatedHeight + 16 + 32 + padding * 2 + 16
-        let clampedHeight = min(max(totalHeight, 200), 600)
+        var originalViewportHeight = min(max(originalDocumentHeight, 64), 150)
+        var translatedViewportHeight = min(max(translatedDocumentHeight, 80), 320)
 
-        let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let fixedHeight: CGFloat = 147
+        let maxWindowHeight = max(260, min(screenFrame.height - 80, 720))
+        let preferredHeight = fixedHeight + originalViewportHeight + translatedViewportHeight
+        if preferredHeight > maxWindowHeight {
+            let overflow = preferredHeight - maxWindowHeight
+            let translatedShrink = min(overflow, max(0, translatedViewportHeight - 80))
+            translatedViewportHeight -= translatedShrink
+
+            let remainingOverflow = overflow - translatedShrink
+            let originalShrink = min(remainingOverflow, max(0, originalViewportHeight - 64))
+            originalViewportHeight -= originalShrink
+        }
+
+        let windowHeight = min(max(fixedHeight + originalViewportHeight + translatedViewportHeight, 240), maxWindowHeight)
+        self.layout = PanelLayout(
+            windowWidth: windowWidth,
+            windowHeight: windowHeight,
+            contentWidth: contentWidth,
+            originalViewportHeight: originalViewportHeight,
+            translatedViewportHeight: translatedViewportHeight,
+            originalDocumentHeight: originalDocumentHeight,
+            translatedDocumentHeight: translatedDocumentHeight
+        )
+
         let windowX = screenFrame.midX - windowWidth / 2
-        let windowY = screenFrame.midY - clampedHeight / 2
+        let windowY = screenFrame.midY - windowHeight / 2
 
         super.init(
-            contentRect: NSRect(x: windowX, y: windowY, width: windowWidth, height: clampedHeight),
+            contentRect: NSRect(x: windowX, y: windowY, width: windowWidth, height: windowHeight),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -62,21 +96,30 @@ class TranslationPanel: NSWindow {
         self.isOpaque = false
         self.hasShadow = true
 
-        setupUI(windowWidth: windowWidth, windowHeight: clampedHeight)
+        setupUI()
     }
 
-    private static func measureTextHeight(_ text: String, width: CGFloat, fontSize: CGFloat) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: fontSize)
-        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+    private static func measureTextHeight(_ text: String, width: CGFloat, font: NSFont) -> CGFloat {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byCharWrapping
+        paragraphStyle.paragraphSpacing = 2
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: paragraphStyle
+        ]
         let boundingRect = (text as NSString).boundingRect(
             with: NSSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: attributes
         )
-        return min(max(ceil(boundingRect.height), 20), 200)
+        let minimumHeight = max(ceil(font.ascender - font.descender + font.leading) + 4, 24)
+        return max(ceil(boundingRect.height) + 4, minimumHeight)
     }
 
-    private func setupUI(windowWidth: CGFloat, windowHeight: CGFloat) {
+    private func setupUI() {
+        let windowWidth = layout.windowWidth
+        let windowHeight = layout.windowHeight
         let container = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight))
         container.material = .hudWindow
         container.blendingMode = .behindWindow
@@ -87,8 +130,8 @@ class TranslationPanel: NSWindow {
         self.contentView = container
 
         let padding: CGFloat = 20
-        let contentWidth = windowWidth - padding * 2
-        var currentY = windowHeight - 48  // 从顶部 titlebar 下方开始
+        let contentWidth = layout.contentWidth
+        var currentY = windowHeight - 44  // 从顶部 titlebar 下方开始
 
         // ── 头部：语言方向标签 ──
         headerLabel = makeLabel(
@@ -97,45 +140,40 @@ class TranslationPanel: NSWindow {
             color: .secondaryLabelColor,
             bold: false
         )
-        headerLabel.frame = NSRect(x: padding, y: currentY, width: contentWidth, height: 16)
-        container.addSubview(headerLabel)
-
-        currentY -= 8
+        headerLabel.frame = NSRect(x: padding, y: currentY, width: contentWidth - 168, height: 16)
 
         // ── 模型标签 ──
         let modelTag = makeLabel(
-            "⚡ \(data.modelName)",
+            "Model: \(data.modelName)",
             fontSize: 10,
             color: .tertiaryLabelColor,
             bold: false
         )
-        modelTag.frame = NSRect(x: windowWidth - padding - 120, y: currentY + 8, width: 120, height: 14)
+        modelTag.frame = NSRect(x: windowWidth - padding - 160, y: currentY, width: 160, height: 14)
         modelTag.alignment = .right
+        container.addSubview(headerLabel)
         container.addSubview(modelTag)
 
-        currentY -= 8
+        currentY -= 28
 
         // ── 原文区域（ScrollView 包裹） ──
-        let originalHeight = TranslationPanel.measureTextHeight(data.original, width: contentWidth, fontSize: 13)
-        let clampedOriginalHeight = min(originalHeight, 120)
-
-        let originalScroll = NSScrollView(frame: NSRect(x: padding, y: currentY - clampedOriginalHeight, width: contentWidth, height: clampedOriginalHeight))
-        originalScroll.hasVerticalScroller = true
-        originalScroll.autohidesScrollers = true
-        originalScroll.borderType = .noBorder
-        originalScroll.drawsBackground = false
-
-        originalLabel = NSTextField(wrappingLabelWithString: data.original)
-        originalLabel.font = NSFont.systemFont(ofSize: 13)
-        originalLabel.textColor = .secondaryLabelColor
-        originalLabel.backgroundColor = .clear
-        originalLabel.isEditable = false
-        originalLabel.isSelectable = true
-        originalLabel.frame = NSRect(x: 0, y: 0, width: contentWidth, height: originalHeight)
-
-        originalScroll.documentView = originalLabel
+        let originalFrame = NSRect(
+            x: padding,
+            y: currentY - layout.originalViewportHeight,
+            width: contentWidth,
+            height: layout.originalViewportHeight
+        )
+        let originalArea = makeScrollableTextArea(
+            text: data.original,
+            font: NSFont.systemFont(ofSize: 13),
+            color: .secondaryLabelColor,
+            frame: originalFrame,
+            documentHeight: layout.originalDocumentHeight
+        )
+        originalTextView = originalArea.textView
+        let originalScroll = originalArea.scrollView
         container.addSubview(originalScroll)
-        currentY -= clampedOriginalHeight + 12
+        currentY -= layout.originalViewportHeight + 12
 
         // ── 分割线 ──
         divider = NSBox(frame: NSRect(x: padding, y: currentY, width: contentWidth, height: 1))
@@ -144,26 +182,23 @@ class TranslationPanel: NSWindow {
         currentY -= 14
 
         // ── 译文区域（ScrollView 包裹） ──
-        let translatedHeight = TranslationPanel.measureTextHeight(data.translated, width: contentWidth, fontSize: 14)
-        let clampedTranslatedHeight = min(translatedHeight, 200)
-
-        let translatedScroll = NSScrollView(frame: NSRect(x: padding, y: currentY - clampedTranslatedHeight, width: contentWidth, height: clampedTranslatedHeight))
-        translatedScroll.hasVerticalScroller = true
-        translatedScroll.autohidesScrollers = true
-        translatedScroll.borderType = .noBorder
-        translatedScroll.drawsBackground = false
-
-        translatedLabel = NSTextField(wrappingLabelWithString: data.translated)
-        translatedLabel.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-        translatedLabel.textColor = .labelColor
-        translatedLabel.backgroundColor = .clear
-        translatedLabel.isEditable = false
-        translatedLabel.isSelectable = true
-        translatedLabel.frame = NSRect(x: 0, y: 0, width: contentWidth, height: translatedHeight)
-
-        translatedScroll.documentView = translatedLabel
+        let translatedFrame = NSRect(
+            x: padding,
+            y: currentY - layout.translatedViewportHeight,
+            width: contentWidth,
+            height: layout.translatedViewportHeight
+        )
+        let translatedArea = makeScrollableTextArea(
+            text: data.translated,
+            font: NSFont.systemFont(ofSize: 14, weight: .medium),
+            color: .labelColor,
+            frame: translatedFrame,
+            documentHeight: layout.translatedDocumentHeight
+        )
+        translatedTextView = translatedArea.textView
+        let translatedScroll = translatedArea.scrollView
         container.addSubview(translatedScroll)
-        currentY -= clampedTranslatedHeight + 16
+        currentY -= layout.translatedViewportHeight + 16
 
         // ── 底部按钮栏 ──
         let buttonY = max(currentY, padding)
@@ -191,6 +226,56 @@ class TranslationPanel: NSWindow {
         closeButton.target = self
         closeButton.action = #selector(closePanel)
         container.addSubview(closeButton)
+
+        DispatchQueue.main.async {
+            self.originalTextView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+            self.translatedTextView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        }
+    }
+
+    private func makeScrollableTextArea(text: String, font: NSFont, color: NSColor, frame: NSRect, documentHeight: CGFloat) -> (scrollView: NSScrollView, textView: NSTextView) {
+        let scrollView = NSScrollView(frame: frame)
+        scrollView.hasVerticalScroller = documentHeight > frame.height + 1
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+
+        let textViewHeight = max(documentHeight, frame.height)
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: frame.width, height: textViewHeight))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.drawsBackground = false
+        textView.backgroundColor = .clear
+        textView.textColor = color
+        textView.font = font
+        textView.textContainerInset = NSSize(width: 0, height: 0)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: frame.width, height: .greatestFiniteMagnitude)
+        textView.textContainer?.lineBreakMode = .byCharWrapping
+        textView.minSize = NSSize(width: frame.width, height: 0)
+        textView.maxSize = NSSize(width: frame.width, height: .greatestFiniteMagnitude)
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byCharWrapping
+        paragraphStyle.paragraphSpacing = 2
+        textView.textStorage?.setAttributedString(NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+                .paragraphStyle: paragraphStyle
+            ]
+        ))
+
+        scrollView.documentView = textView
+        return (scrollView, textView)
     }
 
     private func makeLabel(_ text: String, fontSize: CGFloat, color: NSColor, bold: Bool) -> NSTextField {
@@ -247,20 +332,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 // MARK: - 入口
-// 参数: original translated sourceLang targetLang modelName
+// 参数:
+// 1. TranslatorUI --payload /path/to/payload.json
+// 2. TranslatorUI <original> <translated> <sourceLang> <targetLang> <modelName>
 let args = CommandLine.arguments
-guard args.count >= 6 else {
-    fputs("Usage: TranslatorUI <original> <translated> <sourceLang> <targetLang> <modelName>\n", stderr)
-    exit(1)
+
+func loadTranslationData(from args: [String]) -> TranslationData? {
+    if args.count == 3, args[1] == "--payload" {
+        let payloadURL = URL(fileURLWithPath: args[2])
+        guard
+            let payloadData = try? Data(contentsOf: payloadURL),
+            let decoded = try? JSONDecoder().decode(TranslationData.self, from: payloadData)
+        else {
+            return nil
+        }
+        return decoded
+    }
+
+    if args.count >= 6 {
+        return TranslationData(
+            original: args[1],
+            translated: args[2],
+            sourceLang: args[3],
+            targetLang: args[4],
+            modelName: args[5]
+        )
+    }
+
+    return nil
 }
 
-let translationData = TranslationData(
-    original: args[1],
-    translated: args[2],
-    sourceLang: args[3],
-    targetLang: args[4],
-    modelName: args[5]
-)
+guard let translationData = loadTranslationData(from: args) else {
+    fputs("Usage: TranslatorUI --payload <json-file>\n       TranslatorUI <original> <translated> <sourceLang> <targetLang> <modelName>\n", stderr)
+    exit(1)
+}
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)

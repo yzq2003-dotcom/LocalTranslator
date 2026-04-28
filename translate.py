@@ -11,11 +11,12 @@ import urllib.request
 import urllib.error
 import subprocess
 import os
+import tempfile
 
 # ========================================
 # ⚙️ 配置区 / CONFIGURATION
 # ========================================
-MODEL_NAME = "qwen3.5:9b"     # ← 想换模型？改这一行即可
+MODEL_NAME = os.environ.get("LOCALTRANSLATOR_MODEL", "gemma4:latest")
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
 TIMEOUT_SECONDS = 60           # 本地模型推理超时时间（秒）
 
@@ -114,7 +115,32 @@ def show_loading_notification():
 def show_result(original, translated, source_label, target_label):
     """调用 Swift 原生 UI 展示翻译结果"""
     if os.path.exists(UI_BINARY):
-        subprocess.run([UI_BINARY, original, translated, source_label, target_label, MODEL_NAME])
+        payload = {
+            "original": original,
+            "translated": translated,
+            "sourceLang": source_label,
+            "targetLang": target_label,
+            "modelName": MODEL_NAME,
+        }
+        payload_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".json",
+                prefix="localtranslator-",
+                delete=False,
+            ) as payload_file:
+                json.dump(payload, payload_file, ensure_ascii=False)
+                payload_path = payload_file.name
+
+            subprocess.run([UI_BINARY, "--payload", payload_path])
+        finally:
+            if payload_path:
+                try:
+                    os.unlink(payload_path)
+                except OSError:
+                    pass
     else:
         # 兜底：如果 Swift 二进制不存在，使用 AppleScript
         applescript = """

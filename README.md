@@ -48,62 +48,8 @@
 
 ```bash
 export PYTHONMALLOC=malloc
-INPUT=$(cat)
-
-/usr/bin/python3 - "$INPUT" << 'PYEOF'
-import sys, json, re, os, urllib.request, urllib.error, subprocess
-
-# ⚙️ 配置 —— 换模型改这一行即可
-MODEL_NAME = "qwen3.5:9b"
-OLLAMA_API_URL = "http://localhost:11434/api/chat"
-TIMEOUT = 60
-UI_BINARY = os.path.expanduser("~/Desktop/workspace/开发/LocalTranslator/TranslatorUI")
-
-def detect_lang(text):
-    cjk = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or '\u3400' <= c <= '\u4dbf')
-    if cjk / max(len(text), 1) > 0.15:
-        return "中文", "English", "中文", "English"
-    return "英文", "Chinese", "English", "中文"
-
-def clean(text):
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-    return text if text else "[模型未返回翻译内容]"
-
-def translate(text, target):
-    prompt = f"Translate the following text into {target}. Output ONLY the translation.\n\n{text}"
-    data = {"model": MODEL_NAME, "messages": [{"role": "user", "content": prompt}], "stream": False}
-    req = urllib.request.Request(OLLAMA_API_URL, data=json.dumps(data).encode("utf-8"))
-    req.add_header("Content-Type", "application/json")
-    try:
-        resp = urllib.request.urlopen(req, timeout=TIMEOUT)
-        raw = json.loads(resp.read().decode("utf-8")).get("message", {}).get("content", "")
-        return clean(raw) if raw else "错误：模型返回空内容"
-    except urllib.error.URLError as e:
-        return f"无法连接 Ollama: {e}\n\n请确认 Ollama 正在运行且已下载 {MODEL_NAME}"
-    except Exception as e:
-        return f"翻译失败: {e}"
-
-def show(orig, trans, src_label, tgt_label):
-    if os.path.exists(UI_BINARY):
-        subprocess.run([UI_BINARY, orig, trans, src_label, tgt_label, MODEL_NAME])
-    else:
-        subprocess.run(["osascript", "-e", """
-        on run argv
-            set r to display dialog (item 2 of argv) buttons {"拷贝译文","关闭"} default button "拷贝译文" with title "翻译"
-            if button returned of r is "拷贝译文" then
-                set the clipboard to (item 2 of argv)
-            end if
-        end run""", orig, trans])
-
-text = sys.argv[1].strip() if len(sys.argv) > 1 else ""
-if text:
-    subprocess.Popen(["osascript", "-e", 'display notification "正在翻译..." with title "🌍 翻译中"'])
-    src_cn, target_en, src_label, tgt_label = detect_lang(text)
-    result = translate(text, target_en)
-    show(text, result, src_label, tgt_label)
-else:
-    subprocess.run(["osascript", "-e", 'display dialog "请先选中文本再调用翻译" buttons {"OK"} with title "提示" with icon note'])
-PYEOF
+export LOCALTRANSLATOR_MODEL="gemma4:latest"
+/usr/bin/python3 "$HOME/Desktop/workspace/开发/LocalTranslator/translate.py"
 ```
 
 ### 第 4 步：保存并使用
@@ -115,4 +61,4 @@ PYEOF
 > **设置快捷键**：前往 **系统设置 > 键盘 > 键盘快捷键 > 服务**，找到您保存的名称并录入快捷键（如 `⌘⇧T`）。
 
 > [!TIP]
-> **切换模型**：只需修改嵌入脚本中第 5 行的 `MODEL_NAME` 即可。例如改为 `"llama3.2"` 或 `"gemma3:27b"` 等。
+> **切换模型**：修改 Automator 脚本里的 `LOCALTRANSLATOR_MODEL`，或直接修改 `translate.py` 中的默认模型。例如改为 `"llama3.2"` 或 `"gemma3:27b"` 等。
